@@ -88,10 +88,6 @@ class MainActivity : BaseActivity(), FragmentManager.OnBackStackChangedListener 
             }
             // This menu item is handled by the editor fragment.
             R.id.menu_action_save -> false
-            R.id.menu_settings -> {
-                startActivity(Intent(this, SettingsActivity::class.java))
-                true
-            }
 
             else -> super.onOptionsItemSelected(item)
         }

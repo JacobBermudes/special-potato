@@ -30,6 +30,7 @@ import org.amnezia.awg.Application
 import org.amnezia.awg.R
 import org.amnezia.awg.activity.TunnelCreatorActivity
 import org.amnezia.awg.backend.GoBackend
+import org.amnezia.awg.backend.Tunnel
 import org.amnezia.awg.databinding.ObservableKeyedRecyclerViewAdapter.RowConfigurationHandler
 import org.amnezia.awg.databinding.TunnelListFragmentBinding
 import org.amnezia.awg.databinding.TunnelListItemBinding
@@ -38,10 +39,12 @@ import org.amnezia.awg.util.ErrorMessages
 import org.amnezia.awg.util.QrCodeFromFileScanner
 import org.amnezia.awg.util.TunnelImporter
 import org.amnezia.awg.util.AutoConnector
+import org.amnezia.awg.util.HardcodedConfig
 import org.amnezia.awg.widget.MultiselectableRelativeLayout
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -102,6 +105,29 @@ class TunnelListFragment : BaseFragment() {
                 for (i in checkedItems) actionModeListener.setItemChecked(i, true)
             }
         }
+        
+        lifecycleScope.launch {
+            try {
+                val tunnelManager = Application.getTunnelManager()
+                val tunnels = tunnelManager.getTunnels()
+                val tunnel = tunnels.find { it.name == HardcodedConfig.TUNNEL_NAME }
+                if (tunnel != null) {
+
+                    updateFabState(tunnel)
+                    
+                    while (isAdded) {
+                        val updatedTunnels = tunnelManager.getTunnels()
+                        val updatedTunnel = updatedTunnels.find { it.name == HardcodedConfig.TUNNEL_NAME }
+                        if (updatedTunnel != null) {
+                            updateFabState(updatedTunnel)
+                        }
+                        kotlinx.coroutines.delay(500)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error monitoring tunnel state", e)
+            }
+        }
     }
 
     override fun onCreateView(
@@ -110,66 +136,49 @@ class TunnelListFragment : BaseFragment() {
     ): View? {
         super.onCreateView(inflater, container, savedInstanceState)
         binding = TunnelListFragmentBinding.inflate(inflater, container, false)
-        val bottomSheet = AddTunnelsSheet()
         binding?.apply {
-            createFab.setOnClickListener {
-                if (childFragmentManager.findFragmentByTag("BOTTOM_SHEET") != null)
-                    return@setOnClickListener
-                childFragmentManager.setFragmentResultListener(AddTunnelsSheet.REQUEST_KEY_NEW_TUNNEL, viewLifecycleOwner) { _, bundle ->
-                    when (bundle.getString(AddTunnelsSheet.REQUEST_METHOD)) {
-                        AddTunnelsSheet.REQUEST_CREATE -> {
-                            startActivity(Intent(requireActivity(), TunnelCreatorActivity::class.java))
-                        }
-
-                        AddTunnelsSheet.REQUEST_IMPORT -> {
-                            tunnelFileImportResultLauncher.launch("*/*")
-                        }
-
-                        AddTunnelsSheet.REQUEST_SCAN -> {
-                            qrImportResultLauncher.launch(
-                                ScanOptions()
-                                    .setOrientationLocked(false)
-                                    .setBeepEnabled(false)
-                                    .setPrompt(getString(R.string.qr_code_hint))
-                            )
-                        }
-                    }
-                }
-                bottomSheet.showNow(childFragmentManager, "BOTTOM_SHEET")
-            }
-            
-            hardcodedConnectFab.setOnClickListener {
-                val activity = requireActivity()
+            fabToggleConnection.setOnClickListener {
                 lifecycleScope.launch {
-                    if (Application.getBackend() is GoBackend) {
+                    val tunnels = Application.getTunnelManager().getTunnels()
+                    val tunnel = tunnels.find { it.name == HardcodedConfig.TUNNEL_NAME }
+                    
+                    if (tunnel != null && tunnel.state == Tunnel.State.UP) {
                         try {
-                            val intent = GoBackend.VpnService.prepare(activity)
-                            if (intent != null) {
-                                vpnPermissionActivityResultLauncher.launch(intent)
-                                return@launch
+                            AutoConnector.disconnectHardcodedConfig()
+                            updateFabState(tunnel)
+                        } catch (e: Throwable) {
+                            showSnackbar("Failed to disconnect")
+                            Log.e(TAG, "Failed to disconnect", e)
+                        }
+                    } else {
+                        val activity = requireActivity()
+                        if (Application.getBackend() is GoBackend) {
+                            try {
+                                val intent = GoBackend.VpnService.prepare(activity)
+                                if (intent != null) {
+                                    vpnPermissionActivityResultLauncher.launch(intent)
+                                    return@launch
+                                }
+                            } catch (e: Throwable) {
+                                val message = activity.getString(R.string.error_prepare, ErrorMessages[e])
+                                showSnackbar(message)
+                                Log.e(TAG, message, e)
+                            }
+                        }
+                        try {
+                            val success = AutoConnector.connectWithHardcodedConfig()
+                            if (success) {
+                                showSnackbar("Connected to VPN")
+                                val updatedTunnels = Application.getTunnelManager().getTunnels()
+                                val updatedTunnel = updatedTunnels.find { it.name == HardcodedConfig.TUNNEL_NAME }
+                                if (updatedTunnel != null) updateFabState(updatedTunnel)
+                            } else {
+                                showSnackbar("Failed to connect")
                             }
                         } catch (e: Throwable) {
-                            val message = activity.getString(R.string.error_prepare, ErrorMessages[e])
-                            showSnackbar(message)
-                            Log.e(TAG, message, e)
+                            showSnackbar("Failed to connect")
+                            Log.e(TAG, "Failed to connect", e)
                         }
-                    }
-                    val success = AutoConnector.connectWithHardcodedConfig()
-                    if (success) {
-                        showSnackbar("Connected to VPN")
-                    } else {
-                        showSnackbar("Failed to connect")
-                    }
-                }
-            }
-            
-            hardcodedDisconnectFab.setOnClickListener {
-                lifecycleScope.launch {
-                    val success = AutoConnector.disconnectHardcodedConfig()
-                    if (success) {
-                        showSnackbar("Disconnected from VPN")
-                    } else {
-                        showSnackbar("Failed to disconnect")
                     }
                 }
             }
@@ -245,7 +254,7 @@ class TunnelListFragment : BaseFragment() {
         val binding = binding
         if (binding != null)
             Snackbar.make(binding.mainContainer, message, Snackbar.LENGTH_LONG)
-                .setAnchorView(binding.createFab)
+                .setAnchorView(binding.fabToggleConnection)
                 .show()
         else
             Toast.makeText(activity ?: Application.get(), message, Toast.LENGTH_SHORT).show()
@@ -268,7 +277,7 @@ class TunnelListFragment : BaseFragment() {
                 R.id.menu_action_delete -> {
                     val activity = activity ?: return true
                     val copyCheckedItems = HashSet(checkedItems)
-                    binding?.createFab?.apply {
+                    binding?.fabToggleConnection?.apply {
                         visibility = View.VISIBLE
                         scaleX = 1f
                         scaleY = 1f
@@ -309,7 +318,7 @@ class TunnelListFragment : BaseFragment() {
             if (activity != null) {
                 resources = activity!!.resources
             }
-            animateFab(binding?.createFab, false)
+            animateFab(binding?.fabToggleConnection, false)
             mode.menuInflater.inflate(R.menu.tunnel_list_action_mode, menu)
             binding?.tunnelList?.adapter?.notifyDataSetChanged()
             return true
@@ -319,7 +328,7 @@ class TunnelListFragment : BaseFragment() {
             actionMode = null
             backPressedCallback?.isEnabled = false
             resources = null
-            animateFab(binding?.createFab, true)
+            animateFab(binding?.fabToggleConnection, true)
             checkedItems.clear()
             binding?.tunnelList?.adapter?.notifyDataSetChanged()
         }
@@ -379,6 +388,27 @@ class TunnelListFragment : BaseFragment() {
                 }
             })
             view.startAnimation(animation)
+        }
+    }
+
+    private fun updateFabState(tunnel: ObservableTunnel) {
+        val binding = binding ?: return
+        when {
+            tunnel.state == Tunnel.State.UP && tunnel.connectionStatus == ObservableTunnel.ConnectionStatus.CONNECTED -> {
+                // Подключено - зелёный
+                binding.fabToggleConnection.setImageResource(R.drawable.ic_action_open)
+                binding.fabToggleConnection.setBackgroundColor(android.graphics.Color.parseColor("#4caf50"))
+            }
+            tunnel.state == Tunnel.State.UP -> {
+                // Подключается - жёлтый
+                binding.fabToggleConnection.setImageResource(R.drawable.ic_action_open)
+                binding.fabToggleConnection.setBackgroundColor(android.graphics.Color.parseColor("#ffc107"))
+            }
+            else -> {
+                // Отключено - красный
+                binding.fabToggleConnection.setImageResource(R.drawable.ic_action_delete)
+                binding.fabToggleConnection.setBackgroundColor(android.graphics.Color.parseColor("#f44336"))
+            }
         }
     }
 

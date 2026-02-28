@@ -31,11 +31,11 @@
             android:id="@+id/tunnel_list"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
+            android:visibility="gone"
             android:clipToPadding="false"
-            android:nextFocusDown="@id/create_fab"
-            android:nextFocusForward="@id/create_fab"
+            android:nextFocusDown="@id/fab_toggle_connection"
+            android:nextFocusForward="@id/fab_toggle_connection"
             android:paddingBottom="@{@dimen/design_fab_size_normal * 1.1f}"
-            android:visibility="@{tunnels.size() > 0 ? android.view.View.VISIBLE : android.view.View.GONE}"
             app:configurationHandler="@{rowConfigurationHandler}"
             app:items="@{tunnels}"
             app:layout="@{@layout/tunnel_list_item}"
@@ -44,57 +44,22 @@
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="match_parent"
             android:layout_gravity="center"
             android:orientation="vertical"
-            android:visibility="@{tunnels.size() == 0 ? android.view.View.VISIBLE : android.view.View.GONE}"
-            tools:visibility="gone">
+            android:gravity="center"
+            android:visibility="visible">
 
-            <androidx.appcompat.widget.AppCompatImageView
-                android:id="@+id/logo_placeholder"
-                android:layout_width="140dp"
-                android:layout_height="140dp"
-                android:layout_gravity="center"
-                android:layout_marginBottom="20dp"
-                android:alpha="0.3333333"
-                android:src="@drawable/ic_icon" />
-
-            <TextView
+            <com.google.android.material.floatingactionbutton.FloatingActionButton
+                android:id="@+id/fab_toggle_connection"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_gravity="center"
-                android:layout_marginStart="@dimen/tunnel_list_placeholder_margin"
-                android:layout_marginEnd="@dimen/tunnel_list_placeholder_margin"
-                android:text="@string/tunnel_list_placeholder"
-                android:textSize="20sp" />
+                android:layout_margin="@dimen/fab_margin"
+                android:backgroundTint="@android:color/holo_red_dark"
+                app:srcCompat="@drawable/ic_action_delete"
+                android:contentDescription="Connect VPN" />
+
         </LinearLayout>
-
-        <com.google.android.material.floatingactionbutton.FloatingActionButton
-            android:id="@+id/create_fab"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="bottom|end"
-            android:layout_margin="@dimen/fab_margin"
-            android:nextFocusUp="@id/tunnel_list"
-            app:srcCompat="@drawable/ic_action_add_white" />
-
-        <com.google.android.material.floatingactionbutton.FloatingActionButton
-            android:id="@+id/hardcoded_connect_fab"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="bottom|center"
-            android:layout_margin="@dimen/fab_margin"
-            android:backgroundTint="@android:color/holo_green_dark"
-            app:srcCompat="@drawable/ic_action_open" />
-
-        <com.google.android.material.floatingactionbutton.FloatingActionButton
-            android:id="@+id/hardcoded_disconnect_fab"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="bottom|start"
-            android:layout_margin="@dimen/fab_margin"
-            android:backgroundTint="@android:color/holo_red_dark"
-            app:srcCompat="@drawable/ic_action_delete" />
 
     </androidx.coordinatorlayout.widget.CoordinatorLayout>
 </layout>
