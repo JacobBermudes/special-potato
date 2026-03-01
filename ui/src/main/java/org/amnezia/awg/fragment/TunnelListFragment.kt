@@ -4,10 +4,6 @@
  */
 package org.amnezia.awg.fragment
 
-import android.content.Intent
-import android.content.res.ColorStateList
-import android.content.res.Resources
-import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -15,8 +11,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
-import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.databinding.ObservableList
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.snackbar.Snackbar
 import org.amnezia.awg.Application
@@ -25,26 +21,31 @@ import org.amnezia.awg.backend.GoBackend
 import org.amnezia.awg.backend.Tunnel
 import org.amnezia.awg.databinding.TunnelListFragmentBinding
 import org.amnezia.awg.model.ObservableTunnel
-import org.amnezia.awg.util.ErrorMessages
-import org.amnezia.awg.util.AutoConnector
-import org.amnezia.awg.util.HardcodedConfig
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Simplified fragment for connecting to hardcoded AmneziaWG tunnels with custom image button.
+ * Simplified fragment for connecting to AmneziaWG tunnels.
  */
 class TunnelListFragment : BaseFragment() {
     private var binding: TunnelListFragmentBinding? = null
-    private var currentProfileIndex = 0
+    private var currentTunnelName: String? = null
+    private val tunnelNames = mutableListOf<String>()
+    private lateinit var adapter: ArrayAdapter<String>
     
     private val vpnPermissionActivityResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        val name = currentTunnelName ?: return@registerForActivityResult
         lifecycleScope.launch {
-            val success = AutoConnector.connectWithHardcodedConfig(HardcodedConfig.PROFILES[currentProfileIndex])
-            if (success) {
-                showSnackbar("Connected to VPN")
-            } else {
-                showSnackbar("Failed to connect")
+            val tunnelManager = Application.getTunnelManager()
+            val tunnels = tunnelManager.getTunnels()
+            val tunnel = tunnels.find { it.name == name }
+            if (tunnel != null) {
+                try {
+                    tunnelManager.setTunnelState(tunnel, Tunnel.State.UP)
+                    showSnackbar("Connecting to $name")
+                } catch (e: Exception) {
+                    showSnackbar("Failed to connect")
+                }
             }
         }
     }
@@ -57,25 +58,40 @@ class TunnelListFragment : BaseFragment() {
         lifecycleScope.launch {
             try {
                 val tunnelManager = Application.getTunnelManager()
+                val tunnels = tunnelManager.getTunnels()
                 
-                // Initialize profiles if needed
-                HardcodedConfig.PROFILES.forEach { profile ->
-                    val tunnels = tunnelManager.getTunnels()
-                    if (tunnels.find { it.name == profile.name } == null) {
-                        AutoConnector.connectWithHardcodedConfig(profile)
-                        val tunnel = tunnelManager.getTunnels().find { it.name == profile.name }
-                        if (tunnel != null && tunnel.state != Tunnel.State.DOWN) {
-                            tunnelManager.setTunnelState(tunnel, Tunnel.State.DOWN)
-                        }
+                // Observe tunnel list changes
+                tunnels.addOnListChangedCallback(object : ObservableList.OnListChangedCallback<ObservableList<ObservableTunnel>>() {
+                    override fun onChanged(sender: ObservableList<ObservableTunnel>?) {
+                        updateSpinnerItems()
                     }
-                }
+                    override fun onItemRangeChanged(sender: ObservableList<ObservableTunnel>?, positionStart: Int, itemCount: Int) {
+                        updateSpinnerItems()
+                    }
+                    override fun onItemRangeInserted(sender: ObservableList<ObservableTunnel>?, positionStart: Int, itemCount: Int) {
+                        updateSpinnerItems()
+                    }
+                    override fun onItemRangeMoved(sender: ObservableList<ObservableTunnel>?, fromPosition: Int, toPosition: Int, itemCount: Int) {
+                        updateSpinnerItems()
+                    }
+                    override fun onItemRangeRemoved(sender: ObservableList<ObservableTunnel>?, positionStart: Int, itemCount: Int) {
+                        updateSpinnerItems()
+                    }
+                })
+
+                updateSpinnerItems()
 
                 while (isAdded) {
-                    val currentProfile = HardcodedConfig.PROFILES[currentProfileIndex]
-                    val tunnels = tunnelManager.getTunnels()
-                    val tunnel = tunnels.find { it.name == currentProfile.name }
-                    if (tunnel != null) {
-                        updateStatusUi(tunnel)
+                    val name = currentTunnelName
+                    if (name != null) {
+                        val tunnel = tunnels.find { it.name == name }
+                        if (tunnel != null) {
+                            updateStatusUi(tunnel)
+                        } else {
+                            binding?.statusText?.text = "Unknown"
+                        }
+                    } else {
+                        binding?.statusText?.text = "No tunnels"
                     }
                     delay(500)
                 }
@@ -85,16 +101,39 @@ class TunnelListFragment : BaseFragment() {
         }
     }
 
+    private fun updateSpinnerItems() {
+        lifecycleScope.launch {
+            val tunnels = Application.getTunnelManager().getTunnels()
+            tunnelNames.clear()
+            tunnels.forEach { tunnelNames.add(it.name) }
+            
+            if (tunnelNames.isEmpty()) {
+                tunnelNames.add("No tunnels available")
+            }
+            
+            adapter.notifyDataSetChanged()
+            
+            if (currentTunnelName == null && tunnelNames.isNotEmpty() && tunnelNames[0] != "No tunnels available") {
+                currentTunnelName = tunnelNames[0]
+                binding?.profileSpinner?.setSelection(0)
+            }
+        }
+    }
+
     private fun setupProfileSpinner() {
         val binding = binding ?: return
-        val profileNames = HardcodedConfig.PROFILES.map { it.name }
-        val adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, profileNames)
+        adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, tunnelNames)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         binding.profileSpinner.adapter = adapter
         
         binding.profileSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                currentProfileIndex = position
+                if (position >= 0 && position < tunnelNames.size) {
+                    val selected = tunnelNames[position]
+                    if (selected != "No tunnels available") {
+                        currentTunnelName = selected
+                    }
+                }
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
@@ -108,18 +147,18 @@ class TunnelListFragment : BaseFragment() {
         binding = TunnelListFragmentBinding.inflate(inflater, container, false)
         binding?.apply {
             vpnButton.setOnClickListener {
+                val name = currentTunnelName ?: return@setOnClickListener
                 lifecycleScope.launch {
-                    val currentProfile = HardcodedConfig.PROFILES[currentProfileIndex]
                     val tunnels = Application.getTunnelManager().getTunnels()
-                    val tunnel = tunnels.find { it.name == currentProfile.name }
+                    val tunnel = tunnels.find { it.name == name }
                     
                     if (tunnel != null && tunnel.state == Tunnel.State.UP) {
                         try {
-                            AutoConnector.disconnectHardcodedConfig(currentProfile.name)
+                            Application.getTunnelManager().setTunnelState(tunnel, Tunnel.State.DOWN)
                         } catch (e: Throwable) {
                             showSnackbar("Failed to disconnect")
                         }
-                    } else {
+                    } else if (tunnel != null) {
                         // Disconnect others
                         tunnels.forEach {
                             if (it.state == Tunnel.State.UP) {
@@ -140,7 +179,7 @@ class TunnelListFragment : BaseFragment() {
                             }
                         }
                         try {
-                            AutoConnector.connectWithHardcodedConfig(currentProfile)
+                            Application.getTunnelManager().setTunnelState(tunnel, Tunnel.State.UP)
                         } catch (e: Throwable) {
                             showSnackbar("Failed to connect")
                         }
@@ -178,7 +217,6 @@ class TunnelListFragment : BaseFragment() {
         }
         
         binding.statusText.text = statusTxt
-        // Эффект нажатия/активности через прозрачность картинки
         binding.vpnButton.alpha = alpha
     }
 
