@@ -5,6 +5,10 @@
 
 package org.amnezia.awg.backend;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
@@ -34,6 +38,7 @@ import java.util.concurrent.TimeoutException;
 
 import androidx.annotation.Nullable;
 import androidx.collection.ArraySet;
+import androidx.core.app.NotificationCompat;
 
 import static org.amnezia.awg.GoBackend.*;
 
@@ -44,7 +49,7 @@ import static org.amnezia.awg.GoBackend.*;
 @NonNullForAll
 public final class GoBackend implements Backend {
     private static final int DNS_RESOLUTION_RETRIES = 10;
-    private static final String TAG = "AmneziaWG/GoBackend";
+    private static final String TAG = "SurfBoost/GoBackend";
     @Nullable private static AlwaysOnCallback alwaysOnCallback;
     private static GhettoCompletableFuture<VpnService> vpnService = new GhettoCompletableFuture<>();
     private final Context context;
@@ -74,13 +79,6 @@ public final class GoBackend implements Backend {
         alwaysOnCallback = cb;
     }
 
-
-
-    /**
-     * Method to get the names of running tunnels.
-     *
-     * @return A set of string values denoting names of running tunnels.
-     */
     @Override
     public Set<String> getRunningTunnelNames() {
         if (currentTunnel != null) {
@@ -91,23 +89,11 @@ public final class GoBackend implements Backend {
         return Collections.emptySet();
     }
 
-    /**
-     * Get the associated {@link State} for a given {@link Tunnel}.
-     *
-     * @param tunnel The tunnel to examine the state of.
-     * @return {@link State} associated with the given tunnel.
-     */
     @Override
     public State getState(final Tunnel tunnel) {
         return currentTunnel == tunnel ? State.UP : State.DOWN;
     }
 
-    /**
-     * Get the associated {@link Statistics} for a given {@link Tunnel}.
-     *
-     * @param tunnel The tunnel to retrieve statistics for.
-     * @return {@link Statistics} associated with the given tunnel.
-     */
     @Override
     public Statistics getStatistics(final Tunnel tunnel) {
         final Statistics stats = new Statistics();
@@ -171,101 +157,52 @@ public final class GoBackend implements Backend {
         return stats;
     }
 
-
-    /**
-     * Get the last handshake time for a given {@link Tunnel}.
-     *
-     * @param tunnel The tunnel to retrieve the last handshake time for.
-     * @return Last handshake time in seconds (>=0), -1 if no handshake found, -2 on error, -3 if tunnel not active.
-     */
     @Override
     public long getLastHandshake(final Tunnel tunnel) {
         if (tunnel != currentTunnel || currentTunnelHandle == -1)
-            return -3; // Tunnel not active
+            return -3;
         final String config = awgGetConfig(currentTunnelHandle);
-        if (config == null) {
-            Log.e(TAG, "Failed to get tunnel config");
-            return -2;
-        }
+        if (config == null) return -2;
 
         for (final String line : config.split("\\n")) {
             if (line.startsWith("last_handshake_time_sec=")) {
                 try {
                     return Long.parseLong(line.substring(24));
                 } catch (final NumberFormatException ignored) {
-                    Log.e(TAG, "Failed to parse last_handshake_time_sec");
                     return -2;
                 }
             }
         }
-
-        Log.e(TAG, "Failed to get last_handshake_time_sec");
         return -1;
     }
 
-    /**
-     * Set a callback to be notified when connection status changes.
-     *
-     * @param callback The callback to invoke on status change
-     */
     public void setStatusCallback(@Nullable final StatusCallback callback) {
         this.statusCallback = callback;
     }
 
-    /**
-     * Launch a background thread to poll handshake status and determine connection state.
-     * This is called after tunnel creation to wait for the first successful handshake.
-     */
     private void launchStatusJob() {
         stopStatusJob();
-        Log.d(TAG, "Launch status job");
         statusThread = new Thread(() -> {
             while (!Thread.currentThread().isInterrupted()) {
                 final long lastHandshake = getLastHandshake(currentTunnel);
-
-                // Check if tunnel is no longer active (race condition protection)
-                if (lastHandshake == -3L) {
-                    Log.d(TAG, "Tunnel is no longer active, stopping status job");
-                    break;
-                }
-
-                // 0 means no handshake yet, wait and retry
+                if (lastHandshake == -3L) break;
                 if (lastHandshake == 0L) {
-                    try {
-                        Thread.sleep(1000);
-                    } catch (final InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
+                    try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
                     continue;
                 }
-
-                // Only positive handshake time indicates successful connection
-                // -1 may be returned if unable to parse output (doesn't mean no connection)
-                // -2 indicates command execution error (also doesn't mean no connection)
                 if (lastHandshake > 0L) {
                     if (statusCallback != null) {
                         statusCallback.onStatusChanged(true);
+                        VpnService.updateNotification(context, currentTunnel != null ? currentTunnel.getName() : "");
                     }
                     break;
                 }
-
-                // For -1 or -2, retry after delay instead of reporting disconnected
-                try {
-                    Thread.sleep(1000);
-                } catch (final InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
+                try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
             }
-            statusThread = null;
         }, "StatusJob");
         statusThread.start();
     }
 
-    /**
-     * Stop the status polling thread if running.
-     */
     private void stopStatusJob() {
         if (statusThread != null) {
             statusThread.interrupt();
@@ -273,30 +210,14 @@ public final class GoBackend implements Backend {
         }
     }
 
-    /**
-     * Get the version of the underlying amneziawg-go library.
-     *
-     * @return {@link String} value of the version of the amneziawg-go library.
-     */
     @Override
     public String getVersion() {
         return awgVersion();
     }
 
-    /**
-     * Change the state of a given {@link Tunnel}, optionally applying a given {@link Config}.
-     *
-     * @param tunnel The tunnel to control the state of.
-     * @param state  The new state for this tunnel. Must be {@code UP}, {@code DOWN}, or
-     *               {@code TOGGLE}.
-     * @param config The configuration for this tunnel, may be null if state is {@code DOWN}.
-     * @return {@link State} of the tunnel after state changes are applied.
-     * @throws Exception Exception raised while changing tunnel state.
-     */
     @Override
     public State setState(final Tunnel tunnel, State state, @Nullable final Config config) throws Exception {
         final State originalState = getState(tunnel);
-
         if (state == State.TOGGLE)
             state = originalState == State.UP ? State.DOWN : State.UP;
         if (state == originalState && tunnel == currentTunnel && config == currentConfig)
@@ -321,18 +242,12 @@ public final class GoBackend implements Backend {
 
     private void setStateInternal(final Tunnel tunnel, @Nullable final Config config, final State state)
             throws Exception {
-        Log.i(TAG, "Bringing tunnel " + tunnel.getName() + ' ' + state);
-
         if (state == State.UP) {
-            if (config == null)
-                throw new BackendException(Reason.TUNNEL_MISSING_CONFIG);
-
-            if (VpnService.prepare(context) != null)
-                throw new BackendException(Reason.VPN_NOT_AUTHORIZED);
+            if (config == null) throw new BackendException(Reason.TUNNEL_MISSING_CONFIG);
+            if (VpnService.prepare(context) != null) throw new BackendException(Reason.VPN_NOT_AUTHORIZED);
 
             final VpnService service;
             if (!vpnService.isDone()) {
-                Log.d(TAG, "Requesting to start VpnService");
                 context.startService(new Intent(context, VpnService.class));
             }
 
@@ -345,83 +260,60 @@ public final class GoBackend implements Backend {
             }
             service.setOwner(this);
 
-            if (currentTunnelHandle != -1) {
-                Log.w(TAG, "Tunnel already up");
-                return;
-            }
-
+            if (currentTunnelHandle != -1) return;
 
             dnsRetry: for (int i = 0; i < DNS_RESOLUTION_RETRIES; ++i) {
-                // Pre-resolve IPs so they're cached when building the userspace string
                 for (final Peer peer : config.getPeers()) {
                     final InetEndpoint ep = peer.getEndpoint().orElse(null);
-                    if (ep == null)
-                        continue;
+                    if (ep == null) continue;
                     if (ep.getResolved().orElse(null) == null) {
                         if (i < DNS_RESOLUTION_RETRIES - 1) {
-                            Log.w(TAG, "DNS host \"" + ep.getHost() + "\" failed to resolve; trying again");
                             Thread.sleep(1000);
                             continue dnsRetry;
-                        } else
-                            throw new BackendException(Reason.DNS_RESOLUTION_FAILURE, ep.getHost());
+                        } else throw new BackendException(Reason.DNS_RESOLUTION_FAILURE, ep.getHost());
                     }
                 }
                 break;
             }
 
-            // Build config
             final String goConfig = config.toAwgUserspaceString();
-
-            // Create the vpn tunnel with android API
             final VpnService.Builder builder = service.getBuilder();
             builder.setSession(tunnel.getName());
 
             for (final String excludedApplication : config.getInterface().getExcludedApplications())
                 builder.addDisallowedApplication(excludedApplication);
-
             for (final String includedApplication : config.getInterface().getIncludedApplications())
                 builder.addAllowedApplication(includedApplication);
-
             for (final InetNetwork addr : config.getInterface().getAddresses())
                 builder.addAddress(addr.getAddress(), addr.getMask());
-
             for (final InetAddress addr : config.getInterface().getDnsServers())
                 builder.addDnsServer(addr.getHostAddress());
-
             for (final String dnsSearchDomain : config.getInterface().getDnsSearchDomains())
                 builder.addSearchDomain(dnsSearchDomain);
 
             boolean sawDefaultRoute = false;
             for (final Peer peer : config.getPeers()) {
                 for (final InetNetwork addr : peer.getAllowedIps()) {
-                    if (addr.getMask() == 0)
-                        sawDefaultRoute = true;
+                    if (addr.getMask() == 0) sawDefaultRoute = true;
                     builder.addRoute(addr.getAddress(), addr.getMask());
                 }
             }
 
-            // "Kill-switch" semantics
             if (!(sawDefaultRoute && config.getPeers().size() == 1)) {
                 builder.allowFamily(OsConstants.AF_INET);
                 builder.allowFamily(OsConstants.AF_INET6);
             }
 
             builder.setMtu(config.getInterface().getMtu().orElse(1280));
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-                builder.setMetered(false);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-                service.setUnderlyingNetworks(null);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(false);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) service.setUnderlyingNetworks(null);
 
             builder.setBlocking(true);
             try (final ParcelFileDescriptor tun = builder.establish()) {
-                if (tun == null)
-                    throw new BackendException(Reason.TUN_CREATION_ERROR);
-                Log.d(TAG, "Go backend " + awgVersion());
+                if (tun == null) throw new BackendException(Reason.TUN_CREATION_ERROR);
                 currentTunnelHandle = awgTurnOn(tunnel.getName(), tun.detachFd(), goConfig);
             }
-            if (currentTunnelHandle < 0)
-                throw new BackendException(Reason.GO_ACTIVATION_ERROR_CODE, currentTunnelHandle);
+            if (currentTunnelHandle < 0) throw new BackendException(Reason.GO_ACTIVATION_ERROR_CODE, currentTunnelHandle);
 
             currentTunnel = tunnel;
             currentConfig = config;
@@ -431,10 +323,7 @@ public final class GoBackend implements Backend {
 
             launchStatusJob();
         } else {
-            if (currentTunnelHandle == -1) {
-                Log.w(TAG, "Tunnel already down");
-                return;
-            }
+            if (currentTunnelHandle == -1) return;
             stopStatusJob();
             int handleToClose = currentTunnelHandle;
             currentTunnel = null;
@@ -442,64 +331,77 @@ public final class GoBackend implements Backend {
             currentConfig = null;
             awgTurnOff(handleToClose);
             try {
-                vpnService.get(0, TimeUnit.NANOSECONDS).stopSelf();
-            } catch (final TimeoutException ignored) { }
+                VpnService service = vpnService.get(0, TimeUnit.NANOSECONDS);
+                service.stopForeground(true);
+                service.stopSelf();
+            } catch (final Exception ignored) { }
         }
-
         tunnel.onStateChange(state);
     }
 
-    /**
-     * Callback for {@link GoBackend} that is invoked when {@link VpnService} is started by the
-     * system's Always-On VPN mode.
-     */
     public interface AlwaysOnCallback {
         void alwaysOnTriggered();
     }
 
-    // TODO: When we finally drop API 21 and move to API 24, delete this and replace with the ordinary CompletableFuture.
     private static final class GhettoCompletableFuture<V> {
         private final LinkedBlockingQueue<V> completion = new LinkedBlockingQueue<>(1);
         private final FutureTask<V> result = new FutureTask<>(completion::peek);
 
         public boolean complete(final V value) {
             final boolean offered = completion.offer(value);
-            if (offered)
-                result.run();
+            if (offered) result.run();
             return offered;
         }
 
-        public V get() throws ExecutionException, InterruptedException {
-            return result.get();
-        }
-
-        public V get(final long timeout, final TimeUnit unit) throws ExecutionException, InterruptedException, TimeoutException {
-            return result.get(timeout, unit);
-        }
-
-        public boolean isDone() {
-            return !completion.isEmpty();
-        }
-
-        public GhettoCompletableFuture<V> newIncompleteFuture() {
-            return new GhettoCompletableFuture<>();
-        }
+        public V get() throws ExecutionException, InterruptedException { return result.get(); }
+        public V get(final long timeout, final TimeUnit unit) throws ExecutionException, InterruptedException, TimeoutException { return result.get(timeout, unit); }
+        public boolean isDone() { return !completion.isEmpty(); }
+        public GhettoCompletableFuture<V> newIncompleteFuture() { return new GhettoCompletableFuture<>(); }
     }
 
-    /**
-     * {@link android.net.VpnService} implementation for {@link GoBackend}
-     */
     public static class VpnService extends android.net.VpnService {
+        private static final String CHANNEL_ID = "SurfBoost_VPN";
+        private static final int NOTIFICATION_ID = 12345;
+        public static final String ACTION_DISCONNECT = "org.amnezia.awg.action.DISCONNECT";
         @Nullable private GoBackend owner;
 
-        public Builder getBuilder() {
-            return new Builder();
-        }
+        public Builder getBuilder() { return new Builder(); }
 
         @Override
         public void onCreate() {
             vpnService.complete(this);
             super.onCreate();
+            createNotificationChannel();
+        }
+
+        private void createNotificationChannel() {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "SurfBoost VPN Status", NotificationManager.IMPORTANCE_DEFAULT);
+                NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                if (manager != null) manager.createNotificationChannel(channel);
+            }
+        }
+
+        public static void updateNotification(Context context, String tunnelName) {
+            try {
+                VpnService service = vpnService.get(0, TimeUnit.NANOSECONDS);
+                Intent disconnectIntent = new Intent(ACTION_DISCONNECT);
+                disconnectIntent.setPackage(context.getPackageName());
+
+                PendingIntent disconnectPendingIntent = PendingIntent.getBroadcast(context, 0, disconnectIntent, 
+                    PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0));
+
+                Notification notification = new NotificationCompat.Builder(service, CHANNEL_ID)
+                        .setContentTitle("SurfBoost VPN")
+                        .setContentText("Connected to " + tunnelName)
+                        .setSmallIcon(context.getResources().getIdentifier("ic_notification", "drawable", context.getPackageName()))
+                        .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                        .setOngoing(true)
+                        .addAction(0, "Disconnect", disconnectPendingIntent)
+                        .build();
+
+                service.startForeground(NOTIFICATION_ID, notification);
+            } catch (Exception ignored) {}
         }
 
         @Override
@@ -507,8 +409,7 @@ public final class GoBackend implements Backend {
             if (owner != null) {
                 final Tunnel tunnel = owner.currentTunnel;
                 if (tunnel != null) {
-                    if (owner.currentTunnelHandle != -1)
-                        awgTurnOff(owner.currentTunnelHandle);
+                    if (owner.currentTunnelHandle != -1) awgTurnOff(owner.currentTunnelHandle);
                     owner.currentTunnel = null;
                     owner.currentTunnelHandle = -1;
                     owner.currentConfig = null;
@@ -522,16 +423,17 @@ public final class GoBackend implements Backend {
         @Override
         public int onStartCommand(@Nullable final Intent intent, final int flags, final int startId) {
             vpnService.complete(this);
-            if (intent == null || intent.getComponent() == null || !intent.getComponent().getPackageName().equals(getPackageName())) {
-                Log.d(TAG, "Service started by Always-on VPN feature");
-                if (alwaysOnCallback != null)
-                    alwaysOnCallback.alwaysOnTriggered();
+            if (intent != null && ACTION_DISCONNECT.equals(intent.getAction())) {
+                if (owner != null) {
+                    try { owner.setState(owner.currentTunnel, State.DOWN, null); } catch (Exception ignored) {}
+                }
+                stopForeground(true);
+                stopSelf();
+                return START_NOT_STICKY;
             }
             return super.onStartCommand(intent, flags, startId);
         }
 
-        public void setOwner(final GoBackend owner) {
-            this.owner = owner;
-        }
+        public void setOwner(final GoBackend owner) { this.owner = owner; }
     }
 }

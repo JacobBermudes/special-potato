@@ -27,6 +27,7 @@ zxing-android-embedded = "com.journeyapps:zxing-android-embedded:4.3.0"
 retrofit-core = { group = "com.squareup.retrofit2", name = "retrofit", version.ref = "retrofit" }
 retrofit-gson = { group = "com.squareup.retrofit2", name = "converter-gson", version.ref = "retrofit" }
 okhttp-logging = { group = "com.squareup.okhttp3", name = "logging-interceptor", version.ref = "okhttp" }
+androidx-core = "androidx.core:core:1.12.0"
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

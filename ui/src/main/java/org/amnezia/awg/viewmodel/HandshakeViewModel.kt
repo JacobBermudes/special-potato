@@ -12,8 +12,10 @@ import kotlinx.coroutines.withContext
 import org.amnezia.awg.Application as AwgApplication
 import org.amnezia.awg.config.Config
 import org.amnezia.awg.model.HandshakeRequest
+import org.amnezia.awg.model.RemoteConfig
 import org.amnezia.awg.util.DeviceUtils
 import org.amnezia.awg.util.RetrofitClient
+import org.amnezia.awg.util.UserKnobs
 import java.io.ByteArrayInputStream
 import java.nio.charset.StandardCharsets
 
@@ -28,28 +30,68 @@ class HandshakeViewModel(application: Application) : AndroidViewModel(applicatio
 
         viewModelScope.launch {
             try {
-                val response = RetrofitClient.apiService.sendHandshake(request)
-                if (response.isSuccessful) {
-                    val body = response.body()
-                    if (body != null) {
-                        processConfigs(body.configs)
+                // Step 1: POST /handshake
+                val handshakeResponse = RetrofitClient.apiService.sendHandshake(request)
+                
+                if (handshakeResponse.isSuccessful) {
+                    val handshakeBody = handshakeResponse.body()
+                    val token = handshakeBody?.token
+                    
+                    if (token != null) {
+                        // Save token to DataStore
+                        UserKnobs.setAuthToken(token)
+                        
+                        // Step 2: GET /servers with token
+                        val serversResponse = RetrofitClient.apiService.getServers("Bearer $token")
+                        
+                        if (serversResponse.isSuccessful) {
+                            val body = serversResponse.body()
+                            if (body != null) {
+                                processConfigs(body.configs)
+                                _handshakeResult.postValue(true)
+                            } else {
+                                Log.e("HandshakeViewModel", "Servers response body is null")
+                                _handshakeResult.postValue(false)
+                            }
+                        } else {
+                            Log.e("HandshakeViewModel", "Servers request failed: ${serversResponse.code()}")
+                            _handshakeResult.postValue(false)
+                        }
+                    } else {
+                        Log.e("HandshakeViewModel", "Token is null in handshake response")
+                        _handshakeResult.postValue(false)
                     }
-                    _handshakeResult.postValue(true)
                 } else {
+                    Log.e("HandshakeViewModel", "Handshake request failed: ${handshakeResponse.code()}")
                     _handshakeResult.postValue(false)
                 }
             } catch (e: Exception) {
-                Log.e("HandshakeViewModel", "Error during handshake", e)
+                Log.e("HandshakeViewModel", "Error during network operations", e)
                 _handshakeResult.postValue(false)
             }
         }
     }
 
-    private suspend fun processConfigs(remoteConfigs: List<org.amnezia.awg.model.RemoteConfig>) {
+    private suspend fun processConfigs(remoteConfigs: List<RemoteConfig>) {
         withContext(Dispatchers.IO) {
             val tunnelManager = AwgApplication.getTunnelManager()
             val existingTunnels = tunnelManager.getTunnels()
 
+            // 1. Identify which tunnels to remove
+            // We remove tunnels that are currently in the app but NOT in the new list from the server
+            val remoteNames = remoteConfigs.map { it.name }.toSet()
+            val tunnelsToRemove = existingTunnels.filter { !remoteNames.contains(it.name) }
+
+            tunnelsToRemove.forEach { tunnel ->
+                try {
+                    Log.d("HandshakeViewModel", "Removing old tunnel: ${tunnel.name}")
+                    tunnelManager.delete(tunnel)
+                } catch (e: Exception) {
+                    Log.e("HandshakeViewModel", "Failed to delete old tunnel: ${tunnel.name}", e)
+                }
+            }
+
+            // 2. Update or create tunnels from the new list
             remoteConfigs.forEach { remote ->
                 try {
                     val configStream = ByteArrayInputStream(remote.configContent.toByteArray(StandardCharsets.UTF_8))
@@ -58,9 +100,11 @@ class HandshakeViewModel(application: Application) : AndroidViewModel(applicatio
                     if (existingTunnels.containsKey(remote.name)) {
                         val tunnel = existingTunnels[remote.name]
                         if (tunnel != null) {
+                            Log.d("HandshakeViewModel", "Updating existing tunnel: ${remote.name}")
                             tunnelManager.setTunnelConfig(tunnel, config)
                         }
                     } else {
+                        Log.d("HandshakeViewModel", "Creating new tunnel: ${remote.name}")
                         tunnelManager.create(remote.name, config)
                     }
                 } catch (e: Exception) {

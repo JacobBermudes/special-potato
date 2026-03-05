@@ -88,4 +88,19 @@ object UserKnobs {
                 it[RUNNING_TUNNELS] = runningTunnels
         }
     }
+
+    private val AUTH_TOKEN = stringPreferencesKey("auth_token")
+    val authToken: Flow<String?>
+        get() = Application.getPreferencesDataStore().data.map {
+            it[AUTH_TOKEN]
+        }
+
+    suspend fun setAuthToken(token: String?) {
+        Application.getPreferencesDataStore().edit {
+            if (token == null)
+                it.remove(AUTH_TOKEN)
+            else
+                it[AUTH_TOKEN] = token
+        }
+    }
 }
