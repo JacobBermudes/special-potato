@@ -18,6 +18,7 @@ import org.amnezia.awg.util.RetrofitClient
 import org.amnezia.awg.util.UserKnobs
 import java.io.ByteArrayInputStream
 import java.nio.charset.StandardCharsets
+import kotlinx.coroutines.delay
 
 class HandshakeViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -29,46 +30,43 @@ class HandshakeViewModel(application: Application) : AndroidViewModel(applicatio
         val request = HandshakeRequest(deviceId)
 
         viewModelScope.launch {
-            try {
-                // Step 1: POST /handshake
-                val handshakeResponse = RetrofitClient.apiService.sendHandshake(request)
-                
-                if (handshakeResponse.isSuccessful) {
-                    val handshakeBody = handshakeResponse.body()
-                    val token = handshakeBody?.token
-                    
-                    if (token != null) {
-                        // Save token to DataStore
-                        UserKnobs.setAuthToken(token)
-                        
-                        // Step 2: GET /servers with token
-                        val serversResponse = RetrofitClient.apiService.getServers("Bearer $token")
-                        
-                        if (serversResponse.isSuccessful) {
-                            val body = serversResponse.body()
-                            if (body != null) {
-                                processConfigs(body.configs)
+
+            val maxAttempts = 4
+            val delayMillis = 500L
+
+            for (attempt in 1..maxAttempts) {
+                try {
+                    // Step 1: POST /handshake
+                    val handshakeResponse = RetrofitClient.apiService.sendHandshake(request)
+
+                    if (handshakeResponse.isSuccessful) {
+                        val token = handshakeResponse.body()?.token
+
+                        if (token != null) {
+                            UserKnobs.setAuthToken(token)
+
+                            // Step 2: GET /servers
+                            val serversResponse = RetrofitClient.apiService.getServers("Bearer $token")
+
+                            if (serversResponse.isSuccessful && serversResponse.body() != null) {
+                                processConfigs(serversResponse.body()!!.configs)
                                 _handshakeResult.postValue(true)
-                            } else {
-                                Log.e("HandshakeViewModel", "Servers response body is null")
-                                _handshakeResult.postValue(false)
+                                return@launch
                             }
-                        } else {
-                            Log.e("HandshakeViewModel", "Servers request failed: ${serversResponse.code()}")
-                            _handshakeResult.postValue(false)
                         }
-                    } else {
-                        Log.e("HandshakeViewModel", "Token is null in handshake response")
-                        _handshakeResult.postValue(false)
                     }
-                } else {
-                    Log.e("HandshakeViewModel", "Handshake request failed: ${handshakeResponse.code()}")
-                    _handshakeResult.postValue(false)
+                    Log.w("HandshakeViewModel", "Attempt $attempt failed")
+                } catch (e: Exception) {
+                    Log.e("HandshakeViewModel", "Network error on attempt $attempt", e)
                 }
-            } catch (e: Exception) {
-                Log.e("HandshakeViewModel", "Error during network operations", e)
-                _handshakeResult.postValue(false)
+
+                if (attempt < maxAttempts) {
+                    delay(delayMillis)
+                }
             }
+
+            _handshakeResult.postValue(false)
+
         }
     }
 

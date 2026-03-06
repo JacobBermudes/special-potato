@@ -377,6 +377,7 @@ public final class GoBackend implements Backend {
         private void createNotificationChannel() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "SurfBoost VPN Status", NotificationManager.IMPORTANCE_DEFAULT);
+                channel.setShowBadge(false);
                 NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
                 if (manager != null) manager.createNotificationChannel(channel);
             }
@@ -385,6 +386,12 @@ public final class GoBackend implements Backend {
         public static void updateNotification(Context context, String tunnelName) {
             try {
                 VpnService service = vpnService.get(0, TimeUnit.NANOSECONDS);
+
+                Intent openAppIntent = new Intent(context, Class.forName("org.amnezia.awg.activity.MainActivity"));
+                openAppIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                PendingIntent openAppPendingIntent = PendingIntent.getActivity(context, 0, openAppIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0));
+
                 Intent disconnectIntent = new Intent(ACTION_DISCONNECT);
                 disconnectIntent.setPackage(context.getPackageName());
 
@@ -397,6 +404,9 @@ public final class GoBackend implements Backend {
                         .setSmallIcon(context.getResources().getIdentifier("ic_notification", "drawable", context.getPackageName()))
                         .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                         .setOngoing(true)
+                        .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                        .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                        .setContentIntent(openAppPendingIntent)
                         .addAction(0, "Disconnect", disconnectPendingIntent)
                         .build();
 

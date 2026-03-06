@@ -14,7 +14,6 @@ import android.widget.ArrayAdapter
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.databinding.ObservableList
 import androidx.lifecycle.lifecycleScope
-import com.google.android.material.snackbar.Snackbar
 import org.amnezia.awg.Application
 import org.amnezia.awg.R
 import org.amnezia.awg.backend.GoBackend
@@ -42,9 +41,8 @@ class TunnelListFragment : BaseFragment() {
             if (tunnel != null) {
                 try {
                     tunnelManager.setTunnelState(tunnel, Tunnel.State.UP)
-                    showSnackbar("Connecting to $name")
                 } catch (e: Exception) {
-                    showSnackbar("Failed to connect")
+                    Log.e(TAG, "Failed to connect", e)
                 }
             }
         }
@@ -156,7 +154,7 @@ class TunnelListFragment : BaseFragment() {
                         try {
                             Application.getTunnelManager().setTunnelState(tunnel, Tunnel.State.DOWN)
                         } catch (e: Throwable) {
-                            showSnackbar("Failed to disconnect")
+                            Log.e(TAG, "Failed to disconnect", e)
                         }
                     } else if (tunnel != null) {
                         // Disconnect others
@@ -181,7 +179,7 @@ class TunnelListFragment : BaseFragment() {
                         try {
                             Application.getTunnelManager().setTunnelState(tunnel, Tunnel.State.UP)
                         } catch (e: Throwable) {
-                            showSnackbar("Failed to connect")
+                            Log.e(TAG, "Failed to connect", e)
                         }
                     }
                 }
@@ -196,14 +194,6 @@ class TunnelListFragment : BaseFragment() {
     }
 
     override fun onSelectedTunnelChanged(oldTunnel: ObservableTunnel?, newTunnel: ObservableTunnel?) {}
-
-    private fun showSnackbar(message: CharSequence) {
-        val binding = binding
-        if (binding != null)
-            Snackbar.make(binding.mainContainer, message, Snackbar.LENGTH_LONG)
-                .setAnchorView(binding.profileSpinner)
-                .show()
-    }
 
     private fun updateStatusUi(tunnel: ObservableTunnel) {
         val binding = binding ?: return
@@ -221,6 +211,6 @@ class TunnelListFragment : BaseFragment() {
     }
 
     companion object {
-        private const val TAG = "AmneziaWG/TunnelListFragment"
+        private const val TAG = "SurfBoost/TunnelListFragment"
     }
 }

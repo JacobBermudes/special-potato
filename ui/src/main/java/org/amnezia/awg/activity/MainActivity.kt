@@ -42,9 +42,9 @@ class MainActivity : BaseActivity() {
         // Observe the handshake result
         handshakeViewModel.handshakeResult.observe(this) { success ->
             if (success) {
-                Toast.makeText(this, "Handshake successful", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Server list updated!", Toast.LENGTH_SHORT).show()
             } else {
-                Toast.makeText(this, "Handshake failed", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Server list update fail", Toast.LENGTH_SHORT).show()
             }
         }
 

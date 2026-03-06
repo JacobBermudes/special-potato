@@ -27,6 +27,7 @@ import org.amnezia.awg.util.NetworkType
 import org.amnezia.awg.util.RootShell
 import org.amnezia.awg.util.ToolsInstaller
 import org.amnezia.awg.util.UserKnobs
+import org.amnezia.awg.util.RetrofitClient
 import org.amnezia.awg.util.applicationScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -53,7 +54,7 @@ class Application : android.app.Application() {
 
     override fun attachBaseContext(context: Context) {
         super.attachBaseContext(context)
-        if (BuildConfig.MIN_SDK_VERSION > Build.VERSION.SDK_INT) {
+        if (BuildConfig.MIN_SDK_VERSION > Build.VERSION_CODES.LOLLIPOP_MR1 && BuildConfig.MIN_SDK_VERSION > Build.VERSION.SDK_INT) {
             @Suppress("UnsafeImplicitIntentLaunch")
             val intent = Intent(Intent.ACTION_MAIN)
             intent.addCategory(Intent.CATEGORY_HOME)
@@ -88,6 +89,10 @@ class Application : android.app.Application() {
     override fun onCreate() {
         Log.i(TAG, USER_AGENT)
         super.onCreate()
+        
+        // Initialize RetrofitClient
+        RetrofitClient.init(this)
+
         DynamicColors.applyToActivitiesIfAvailable(this)
         rootShell = RootShell(applicationContext)
         toolsInstaller = ToolsInstaller(applicationContext, rootShell)
