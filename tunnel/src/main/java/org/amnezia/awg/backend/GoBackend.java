@@ -11,6 +11,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.media.AudioAttributes;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.system.OsConstants;
@@ -360,7 +361,7 @@ public final class GoBackend implements Backend {
     }
 
     public static class VpnService extends android.net.VpnService {
-        private static final String CHANNEL_ID = "SurfBoost_VPN";
+        private static final String CHANNEL_ID = "SurfBoost_VPN_STATUS";
         private static final int NOTIFICATION_ID = 12345;
         public static final String ACTION_DISCONNECT = "org.amnezia.awg.action.DISCONNECT";
         @Nullable private GoBackend owner;
@@ -376,8 +377,10 @@ public final class GoBackend implements Backend {
 
         private void createNotificationChannel() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "SurfBoost VPN Status", NotificationManager.IMPORTANCE_DEFAULT);
-                channel.setShowBadge(false);
+                NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "SurfBoost VPN Connection Status", NotificationManager.IMPORTANCE_DEFAULT);
+                channel.setShowBadge(true);
+                channel.setSound(null, null);
+                channel.enableVibration(false);
                 NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
                 if (manager != null) manager.createNotificationChannel(channel);
             }
@@ -398,16 +401,21 @@ public final class GoBackend implements Backend {
                 PendingIntent disconnectPendingIntent = PendingIntent.getBroadcast(context, 0, disconnectIntent, 
                     PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0));
 
+                int iconId = context.getResources().getIdentifier("ic_notification", "drawable", context.getPackageName());
+                if (iconId == 0) iconId = context.getApplicationInfo().icon;
+                if (iconId == 0) iconId = android.R.drawable.ic_menu_info_details;
+
                 Notification notification = new NotificationCompat.Builder(service, CHANNEL_ID)
                         .setContentTitle("SurfBoost VPN")
                         .setContentText("Connected to " + tunnelName)
-                        .setSmallIcon(context.getResources().getIdentifier("ic_notification", "drawable", context.getPackageName()))
+                        .setSmallIcon(iconId)
                         .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                         .setOngoing(true)
                         .setCategory(NotificationCompat.CATEGORY_SERVICE)
                         .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                         .setContentIntent(openAppPendingIntent)
                         .addAction(0, "Disconnect", disconnectPendingIntent)
+                        .setSilent(true)
                         .build();
 
                 service.startForeground(NOTIFICATION_ID, notification);

@@ -11,8 +11,10 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.databinding.ObservableList
+import androidx.fragment.app.viewModels
 import androidx.lifecycle.lifecycleScope
 import org.amnezia.awg.Application
 import org.amnezia.awg.R
@@ -20,6 +22,7 @@ import org.amnezia.awg.backend.GoBackend
 import org.amnezia.awg.backend.Tunnel
 import org.amnezia.awg.databinding.TunnelListFragmentBinding
 import org.amnezia.awg.model.ObservableTunnel
+import org.amnezia.awg.viewmodel.HandshakeViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -31,6 +34,7 @@ class TunnelListFragment : BaseFragment() {
     private var currentTunnelName: String? = null
     private val tunnelNames = mutableListOf<String>()
     private lateinit var adapter: ArrayAdapter<String>
+    private val handshakeViewModel: HandshakeViewModel by viewModels()
     
     private val vpnPermissionActivityResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         val name = currentTunnelName ?: return@registerForActivityResult
@@ -53,6 +57,17 @@ class TunnelListFragment : BaseFragment() {
         
         setupProfileSpinner()
         
+        handshakeViewModel.handshakeResult.observe(viewLifecycleOwner) { success ->
+            if (success) {
+                Toast.makeText(requireContext(), "Server list updated!", Toast.LENGTH_SHORT).show()
+                updateSpinnerItems()
+            } else {
+                Toast.makeText(requireContext(), "Server list update fail", Toast.LENGTH_SHORT).show()
+            }
+            binding?.refreshButton?.isEnabled = true
+            binding?.refreshButton?.alpha = 1.0f
+        }
+
         lifecycleScope.launch {
             try {
                 val tunnelManager = Application.getTunnelManager()
@@ -102,6 +117,8 @@ class TunnelListFragment : BaseFragment() {
     private fun updateSpinnerItems() {
         lifecycleScope.launch {
             val tunnels = Application.getTunnelManager().getTunnels()
+            val oldSelection = currentTunnelName
+            
             tunnelNames.clear()
             tunnels.forEach { tunnelNames.add(it.name) }
             
@@ -111,17 +128,22 @@ class TunnelListFragment : BaseFragment() {
             
             adapter.notifyDataSetChanged()
             
-            if (currentTunnelName == null && tunnelNames.isNotEmpty() && tunnelNames[0] != "No tunnels available") {
-                currentTunnelName = tunnelNames[0]
-                binding?.profileSpinner?.setSelection(0)
+            val newPosition = if (oldSelection != null) {
+                val index = tunnelNames.indexOf(oldSelection)
+                if (index != -1) index else 0
+            } else 0
+            
+            if (tunnelNames.isNotEmpty() && tunnelNames[0] != "No tunnels available") {
+                binding?.profileSpinner?.setSelection(newPosition)
+                currentTunnelName = tunnelNames[newPosition]
             }
         }
     }
 
     private fun setupProfileSpinner() {
         val binding = binding ?: return
-        adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, tunnelNames)
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        adapter = ArrayAdapter(requireContext(), R.layout.spinner_item, tunnelNames)
+        adapter.setDropDownViewResource(R.layout.spinner_dropdown_item)
         binding.profileSpinner.adapter = adapter
         
         binding.profileSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
@@ -144,6 +166,12 @@ class TunnelListFragment : BaseFragment() {
         super.onCreateView(inflater, container, savedInstanceState)
         binding = TunnelListFragmentBinding.inflate(inflater, container, false)
         binding?.apply {
+            refreshButton.setOnClickListener {
+                it.isEnabled = false
+                it.alpha = 0.5f
+                handshakeViewModel.performHandshake()
+            }
+
             vpnButton.setOnClickListener {
                 val name = currentTunnelName ?: return@setOnClickListener
                 lifecycleScope.launch {

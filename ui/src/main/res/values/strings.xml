@@ -263,4 +263,5 @@
     <string name="import_disclaimer">Ensure that you obtained the configuration file from a trusted source.\n\nOfficial SurfBoost services are available only at <a href="https://surfboost.com">surfboost.com</a>\n</string>
     <string name="tunnel_status_connected">Connected</string>
     <string name="tunnel_status_connecting">Connecting…</string>
+    <string name="tunnel_status_disconnected">Connect</string>
 </resources>
